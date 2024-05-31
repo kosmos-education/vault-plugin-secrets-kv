@@ -136,10 +136,10 @@ func VersionedKVFactory(ctx context.Context, conf *logical.BackendConfig) (logic
 			[]*framework.Path{
 				pathConfig(b),
 				pathData(b),
-				pathMetadata(b),
 				pathDestroy(b),
 				pathSubkeys(b),
 			},
+			pathMetadata(b),
 			pathsDelete(b),
 
 			// Make sure this stays at the end so that the valid paths are

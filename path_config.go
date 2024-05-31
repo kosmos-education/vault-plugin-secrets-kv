@@ -180,6 +180,8 @@ func (b *versionedKVBackend) pathConfigWrite() framework.OperationFunc {
 }
 
 const (
+	confHelpSynRecursive  = `Lists all keys below the given path recursively.`
+	confHelpDescRecursive = `Lists all keys below the given path recursively.`
 	confHelpSyn  = `Configures settings for the KV store`
 	confHelpDesc = `
 This path configures backend level settings that are applied to every key in the
