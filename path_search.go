@@ -21,6 +21,11 @@ func pathSearch(b *versionedKVBackend) *framework.Path {
 				Description: "Path or secret name",
 			},
 		},
+		DisplayAttrs: &framework.DisplayAttributes{
+			OperationPrefix: operationPrefixKVv2,
+			OperationVerb:   "search",
+			OperationSuffix: "keyword",
+		},
 		Operations: map[logical.Operation]framework.OperationHandler{
 			logical.ListOperation: &framework.PathOperation{
 				Callback: b.upgradeCheck(b.pathSearchListRecursive()),
