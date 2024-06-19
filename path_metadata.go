@@ -22,231 +22,153 @@ import (
 
 // pathMetadata returns the path configuration for CRUD operations on the
 // metadata endpoint
-func pathMetadata(b *versionedKVBackend) []*framework.Path {
-	return []*framework.Path{
-		{
-			Pattern: "metadata/" + framework.MatchAllRegex("path"),
+func pathMetadata(b *versionedKVBackend) *framework.Path {
+	return &framework.Path{
+		Pattern: "metadata/" + framework.MatchAllRegex("path"),
 
-			DisplayAttrs: &framework.DisplayAttributes{
-				OperationPrefix: operationPrefixKVv2,
+		DisplayAttrs: &framework.DisplayAttributes{
+			OperationPrefix: operationPrefixKVv2,
+		},
+
+		Fields: map[string]*framework.FieldSchema{
+			"path": {
+				Type:        framework.TypeString,
+				Description: "Location of the secret.",
 			},
-
-			Fields: map[string]*framework.FieldSchema{
-				"path": {
-					Type:        framework.TypeString,
-					Description: "Location of the secret.",
-				},
-				"cas_required": {
-					Type: framework.TypeBool,
-					Description: `
+			"cas_required": {
+				Type: framework.TypeBool,
+				Description: `
 If true the key will require the cas parameter to be set on all write requests.
 If false, the backend’s configuration will be used.`,
-				},
-				"max_versions": {
-					Type: framework.TypeInt,
-					Description: `
+			},
+			"max_versions": {
+				Type: framework.TypeInt,
+				Description: `
 The number of versions to keep. If not set, the backend’s configured max
 version is used.`,
-				},
-				"delete_version_after": {
-					Type: framework.TypeDurationSecond,
-					Description: `
+			},
+			"delete_version_after": {
+				Type: framework.TypeDurationSecond,
+				Description: `
 The length of time before a version is deleted. If not set, the backend's
 configured delete_version_after is used. Cannot be greater than the
 backend's delete_version_after. A zero duration clears the current setting.
 A negative duration will cause an error.
 `,
-				},
-				"custom_metadata": {
-					Type: framework.TypeMap,
-					Description: `
+			},
+			"custom_metadata": {
+				Type: framework.TypeMap,
+				Description: `
 User-provided key-value pairs that are used to describe arbitrary and
 version-agnostic information about a secret.
 `,
+			},
+		},
+
+		Operations: map[logical.Operation]framework.OperationHandler{
+			logical.UpdateOperation: &framework.PathOperation{
+				Callback: b.upgradeCheck(b.pathMetadataWrite()),
+				Responses: map[int][]framework.Response{
+					http.StatusNoContent: {{
+						Description: http.StatusText(http.StatusNoContent),
+					}},
+				},
+				DisplayAttrs: &framework.DisplayAttributes{
+					OperationSuffix: "metadata",
 				},
 			},
-
-			Operations: map[logical.Operation]framework.OperationHandler{
-				logical.UpdateOperation: &framework.PathOperation{
-					Callback: b.upgradeCheck(b.pathMetadataWrite()),
-					Responses: map[int][]framework.Response{
-						http.StatusNoContent: {{
-							Description: http.StatusText(http.StatusNoContent),
-						}},
-					},
-					DisplayAttrs: &framework.DisplayAttributes{
-						OperationSuffix: "metadata",
-					},
+			logical.CreateOperation: &framework.PathOperation{
+				Callback: b.upgradeCheck(b.pathMetadataWrite()),
+				Responses: map[int][]framework.Response{
+					http.StatusNoContent: {{
+						Description: http.StatusText(http.StatusNoContent),
+					}},
 				},
-				logical.CreateOperation: &framework.PathOperation{
-					Callback: b.upgradeCheck(b.pathMetadataWrite()),
-					Responses: map[int][]framework.Response{
-						http.StatusNoContent: {{
-							Description: http.StatusText(http.StatusNoContent),
-						}},
-					},
-				},
-				logical.ReadOperation: &framework.PathOperation{
-					Callback: b.upgradeCheck(b.pathMetadataRead()),
-					Responses: map[int][]framework.Response{
-						http.StatusOK: {{
-							Description: http.StatusText(http.StatusOK),
-							Fields: map[string]*framework.FieldSchema{
-								"versions": {
-									Type:     framework.TypeMap,
-									Required: true,
-								},
-								"current_version": {
-									Type:     framework.TypeInt64, // uint64
-									Required: true,
-								},
-								"oldest_version": {
-									Type:     framework.TypeInt64, // uint64
-									Required: true,
-								},
-								"created_time": {
-									Type:     framework.TypeTime,
-									Required: true,
-								},
-								"updated_time": {
-									Type:     framework.TypeTime,
-									Required: true,
-								},
-								"max_versions": {
-									Type:        framework.TypeInt64, // uint32
-									Description: "The number of versions to keep",
-									Required:    true,
-								},
-								"cas_required": {
-									Type:     framework.TypeBool,
-									Required: true,
-								},
-								"delete_version_after": {
-									Type:        framework.TypeDurationSecond,
-									Description: "The length of time before a version is deleted.",
-									Required:    true,
-								},
-								"custom_metadata": {
-									Type:        framework.TypeMap,
-									Description: "User-provided key-value pairs that are used to describe arbitrary and version-agnostic information about a secret.",
-									Required:    true,
-								},
+			},
+			logical.ReadOperation: &framework.PathOperation{
+				Callback: b.upgradeCheck(b.pathMetadataRead()),
+				Responses: map[int][]framework.Response{
+					http.StatusOK: {{
+						Description: http.StatusText(http.StatusOK),
+						Fields: map[string]*framework.FieldSchema{
+							"versions": {
+								Type:     framework.TypeMap,
+								Required: true,
 							},
-						}},
-					},
-					DisplayAttrs: &framework.DisplayAttributes{
-						OperationSuffix: "metadata",
-					},
+							"current_version": {
+								Type:     framework.TypeInt64, // uint64
+								Required: true,
+							},
+							"oldest_version": {
+								Type:     framework.TypeInt64, // uint64
+								Required: true,
+							},
+							"created_time": {
+								Type:     framework.TypeTime,
+								Required: true,
+							},
+							"updated_time": {
+								Type:     framework.TypeTime,
+								Required: true,
+							},
+							"max_versions": {
+								Type:        framework.TypeInt64, // uint32
+								Description: "The number of versions to keep",
+								Required:    true,
+							},
+							"cas_required": {
+								Type:     framework.TypeBool,
+								Required: true,
+							},
+							"delete_version_after": {
+								Type:        framework.TypeDurationSecond,
+								Description: "The length of time before a version is deleted.",
+								Required:    true,
+							},
+							"custom_metadata": {
+								Type:        framework.TypeMap,
+								Description: "User-provided key-value pairs that are used to describe arbitrary and version-agnostic information about a secret.",
+								Required:    true,
+							},
+						},
+					}},
 				},
-				logical.DeleteOperation: &framework.PathOperation{
-					Callback: b.upgradeCheck(b.pathMetadataDelete()),
-					Responses: map[int][]framework.Response{
-						http.StatusNoContent: {{
-							Description: http.StatusText(http.StatusNoContent),
-						}},
-					},
-					DisplayAttrs: &framework.DisplayAttributes{
-						OperationSuffix: "metadata-and-all-versions",
-					},
-				},
-				logical.ListOperation: &framework.PathOperation{
-					Callback: b.upgradeCheck(b.pathMetadataList()),
-					DisplayAttrs: &framework.DisplayAttributes{
-						OperationVerb: "list",
-					},
-				},
-				logical.PatchOperation: &framework.PathOperation{
-					Callback: b.upgradeCheck(b.pathMetadataPatch()),
-					Responses: map[int][]framework.Response{
-						http.StatusNoContent: {{
-							Description: http.StatusText(http.StatusNoContent),
-						}},
-					},
+				DisplayAttrs: &framework.DisplayAttributes{
+					OperationSuffix: "metadata",
 				},
 			},
-
-			ExistenceCheck: b.metadataExistenceCheck(),
-
-			HelpSynopsis:    confHelpSyn,
-			HelpDescription: confHelpDesc,
+			logical.DeleteOperation: &framework.PathOperation{
+				Callback: b.upgradeCheck(b.pathMetadataDelete()),
+				Responses: map[int][]framework.Response{
+					http.StatusNoContent: {{
+						Description: http.StatusText(http.StatusNoContent),
+					}},
+				},
+				DisplayAttrs: &framework.DisplayAttributes{
+					OperationSuffix: "metadata-and-all-versions",
+				},
+			},
+			logical.ListOperation: &framework.PathOperation{
+				Callback: b.upgradeCheck(b.pathMetadataList()),
+				DisplayAttrs: &framework.DisplayAttributes{
+					OperationVerb: "list",
+				},
+			},
+			logical.PatchOperation: &framework.PathOperation{
+				Callback: b.upgradeCheck(b.pathMetadataPatch()),
+				Responses: map[int][]framework.Response{
+					http.StatusNoContent: {{
+						Description: http.StatusText(http.StatusNoContent),
+					}},
+				},
+			},
 		},
-		{
-			Pattern: "search/" + framework.MatchAllRegex("secret_name"),
-			Fields: map[string]*framework.FieldSchema{
-				"secret_name": {
-					Type:        framework.TypeString,
-					Description: "Find secret recursively.",
-				},
-			},
-			Operations: map[logical.Operation]framework.OperationHandler{
-				logical.ListOperation: &framework.PathOperation{
-					Callback: b.upgradeCheck(b.pathMetadataListRecursive()),
-					DisplayAttrs: &framework.DisplayAttributes{
-						OperationVerb: "list",
-					},
-				},
-			},
-			ExistenceCheck:  b.metadataExistenceCheck(),
-			HelpSynopsis:    confHelpSynRecursive,
-			HelpDescription: confHelpDescRecursive,
-		},
+
+		ExistenceCheck: b.metadataExistenceCheck(),
+
+		HelpSynopsis:    confHelpSyn,
+		HelpDescription: confHelpDesc,
 	}
-}
-
-func (b *versionedKVBackend) pathMetadataListRecursive() framework.OperationFunc {
-	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-		secretName := strings.Trim(data.Get("secret_name").(string), "/")
-
-		// Get an encrypted key storage object
-		wrapper, err := b.getKeyEncryptor(ctx, req.Storage)
-		if err != nil {
-			return nil, err
-		}
-
-		es := wrapper.Wrap(req.Storage)
-
-		// Use encrypted key storage to list the keys
-		keys, err := es.List(ctx, "/")
-		if err != nil {
-			return logical.ListResponse(keys), err
-		}
-
-		keys, err = recursiveLookup(ctx, "/", secretName, keys, es)
-		if err != nil {
-			return logical.ListResponse(keys), err
-		}
-		return logical.ListResponse(keys), nil
-	}
-}
-
-// recursiveLookup is a recursive function that looks up all subfolders from the given paths.
-// It returns a correlated list of all paths and keys equal to secretName.
-func recursiveLookup(ctx context.Context, path string, secretName string, keys []string, es logical.Storage) ([]string, error) {
-	var lookedUpKeys []string
-
-	for _, key := range keys {
-		fullPath := path + key
-
-		if strings.Contains(strings.Trim(key, "/"), secretName) {
-			lookedUpKeys = append(lookedUpKeys, fullPath)
-		}
-		// Check if the current key is a subfolder
-		if strings.HasSuffix(key, "/") {
-			// Load keys from subfolder recursively
-			subFolderKeys, err := es.List(ctx, fullPath)
-			if err != nil {
-				return lookedUpKeys, err
-			}
-
-			// Check if returned keys contains a subfolder and search keys recursively
-			recursiveLookupKeys, err := recursiveLookup(ctx, fullPath, secretName, subFolderKeys, es)
-			if err != nil {
-				return lookedUpKeys, err
-			}
-			lookedUpKeys = append(lookedUpKeys, recursiveLookupKeys...)
-		}
-	}
-	return lookedUpKeys, nil
 }
 
 func (b *versionedKVBackend) metadataExistenceCheck() framework.ExistenceFunc {

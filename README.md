@@ -1,54 +1,42 @@
-# Vault Plugin: Key-Value Secrets Backend with secret search feature
+# Vault Plugin: Key-Value Secrets Backend [![Build Status](https://travis-ci.org/hashicorp/vault-plugin-secrets-kv.svg?branch=master)](https://travis-ci.org/hashicorp/vault-plugin-secrets-kv)
 
-This is an evolution of the original [KV backend plugin](https://github.com/hashicorp/vault-plugin-secrets-kv) for use with [Hashicorp Vault](https://www.github.com/hashicorp/vault).
-This implementation provides recursive search for all Key-Value secrets backend by adding the /search API endpoint.
+This is a standalone backend plugin for use with [Hashicorp Vault](https://www.github.com/hashicorp/vault).
+This plugin provides Key-Value functionality to Vault.
 
-
-**Please note carefully**: this is a highly experimental project and should be only used as a preview feature.
-I do not recommend any use in production, as the current behavior might be I/O intensive for the server in certain cases, and could lead to performance degradation. 
-
+**Please note**: We take Vault's security and our users' trust very seriously. If you believe you have found a security issue in Vault, _please responsibly disclose_ by contacting us at [security@hashicorp.com](mailto:security@hashicorp.com).
 
 ## Quick Links
-    - KV original Docs: https://github.com/hashicorp/vault-plugin-secrets-kv/blob/main/README.md
+    - Vault Website: https://www.vaultproject.io
+    - KV Docs: https://www.vaultproject.io/docs/secrets/kv/index.html
+    - Main Project Github: https://www.github.com/hashicorp/vault
 
-## API reference
+## Getting Started
 
-```http
-  GET /${backend}/search/${secret_name}
+This is a [Vault plugin](https://www.vaultproject.io/docs/internals/plugins.html)
+and is meant to work with Vault. This guide assumes you have already installed Vault
+and have a basic understanding of how Vault works.
+
+Otherwise, first read this guide on how to [get started with Vault](https://www.vaultproject.io/intro/getting-started/install.html).
+
+To learn specifically about how plugins work, see documentation on [Vault plugins](https://www.vaultproject.io/docs/internals/plugins.html).
+
+## Usage
+
+Please see [documentation for the plugin](https://www.vaultproject.io/docs/secrets/kv/index.html)
+on the Vault website.
+
+This plugin is currently built into Vault and by default is accessed
+at `kv`. To enable this in a running Vault server:
+
+```sh
+$ vault secrets enable kv
+Success! Enabled the kv secrets engine at: kv/
 ```
 
-| Parameter     | Type     | Description                           |
-|:--------------| :------- |:--------------------------------------|
-| `backend`     | `string` | Backend name (KV v2 type)             |
-| `secret_name` | `string` | Name of the secret we are looking for |
+Additionally starting with Vault 0.10 this backend is by default mounted
+at `secret/`.
 
-### Example
-```http
-  GET /secret/search/demo
-```
-
-
-Response body:
-```json
-{
-"request_id": "49ed8e03-0748-72a3-d645-413f036fa367",
-"lease_id": "",
-"renewable": false,
-"lease_duration": 0,
-"data": {
-    "keys": [
-        "/path1/demo",
-        "/path1/path12/demo",
-        "/path2/path21/demo"
-    ]
-},
-"wrap_info": null,
-"warnings": null,
-"auth": null
-}
-```
-
-## Use with Vault
+## Developing
 
 If you wish to work on this plugin, you'll first need
 [Go](https://www.golang.org) installed on your machine
@@ -125,4 +113,22 @@ $ vault secrets enable -plugin-name='kv' plugin
 ...
 
 Successfully enabled 'plugin' at 'kv'!
+```
+
+#### Tests
+
+If you are developing this plugin and want to verify it is still
+functioning (and you haven't broken anything else), we recommend
+running the tests.
+
+To run the tests, invoke `make test`:
+
+```sh
+$ make test
+```
+
+You can also specify a `TESTARGS` variable to filter tests like so:
+
+```sh
+$ make test TESTARGS='--run=TestConfig'
 ```
