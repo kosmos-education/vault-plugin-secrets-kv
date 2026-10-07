@@ -1,4 +1,4 @@
-// Copyright (c) HashiCorp, Inc.
+// Copyright IBM Corp. 2018, 2025
 // SPDX-License-Identifier: MPL-2.0
 
 package kv
@@ -6,6 +6,8 @@ package kv
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +16,20 @@ import (
 	"github.com/hashicorp/vault/sdk/helper/testhelpers/schema"
 	"github.com/hashicorp/vault/sdk/logical"
 )
+
+// assertKeysMatch checks that the actual keys slice contains exactly the expected keys
+// in any order, providing helpful error messages if they don't match
+func assertKeysMatch(t *testing.T, actual []string, expected []string, context string) {
+	t.Helper()
+	if len(actual) != len(expected) {
+		t.Fatalf("%s: expected %d keys, got %d: %v", context, len(expected), len(actual), actual)
+	}
+	for _, expectedKey := range expected {
+		if !slices.Contains(actual, expectedKey) {
+			t.Fatalf("%s: missing key %s, should be contained within %v", context, expectedKey, actual)
+		}
+	}
+}
 
 func TestVersionedKV_Metadata_Put(t *testing.T) {
 	b, storage := getBackend(t)
@@ -101,90 +117,29 @@ func TestVersionedKV_Metadata_Put(t *testing.T) {
 		t.Fatalf("expected error, %#v", resp)
 	}
 
+	type testCase struct {
+		name        string
+		data        map[string]interface{}
+		displayName string
+		entityID    string
+		clientID    string
+		cas         uint64
+		expVersion  uint64
+	}
+
 	data = map[string]interface{}{
-		"data": map[string]interface{}{
-			"bar": "baz1",
-		},
-		"options": map[string]interface{}{
-			"cas": 0,
-		},
+		"max_versions": 3,
+		"cas_required": true,
 	}
 
 	req = &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "data/foo",
-		Storage:   storage,
-		Data:      data,
-	}
-
-	resp, err = b.HandleRequest(context.Background(), req)
-	if err != nil || resp == nil || resp.IsError() {
-		t.Fatalf("err:%s resp:%#v\n", err, resp)
-	}
-
-	if resp.Data["version"] != uint64(1) {
-		t.Fatalf("Bad response: %#v", resp)
-	}
-
-	data = map[string]interface{}{
-		"data": map[string]interface{}{
-			"bar": "baz1",
-		},
-		"options": map[string]interface{}{
-			"cas": 1,
-		},
-	}
-
-	req = &logical.Request{
-		Operation: logical.CreateOperation,
-		Path:      "data/foo",
-		Storage:   storage,
-		Data:      data,
-	}
-
-	resp, err = b.HandleRequest(context.Background(), req)
-	if err != nil || resp == nil || resp.IsError() {
-		t.Fatalf("err:%s resp:%#v\n", err, resp)
-	}
-
-	if resp.Data["version"] != uint64(2) {
-		t.Fatalf("Bad response: %#v", resp)
-	}
-
-	data = map[string]interface{}{
-		"data": map[string]interface{}{
-			"bar": "baz1",
-		},
-		"options": map[string]interface{}{
-			"cas": 2,
-		},
-	}
-
-	req = &logical.Request{
-		Operation: logical.CreateOperation,
-		Path:      "data/foo",
-		Storage:   storage,
-		Data:      data,
-	}
-
-	resp, err = b.HandleRequest(context.Background(), req)
-	if err != nil || resp == nil || resp.IsError() {
-		t.Fatalf("err:%s resp:%#v\n", err, resp)
-	}
-
-	if resp.Data["version"] != uint64(3) {
-		t.Fatalf("Bad response: %#v", resp)
-	}
-
-	req = &logical.Request{
-		Operation: logical.ReadOperation,
 		Path:      "metadata/foo",
 		Storage:   storage,
 		Data:      data,
 	}
-
 	resp, err = b.HandleRequest(context.Background(), req)
-	if err != nil || resp == nil || resp.IsError() {
+	if err != nil || (resp != nil && resp.IsError()) {
 		t.Fatalf("err:%s resp:%#v\n", err, resp)
 	}
 	schema.ValidateResponse(
@@ -194,20 +149,93 @@ func TestVersionedKV_Metadata_Put(t *testing.T) {
 		true,
 	)
 
-	if resp.Data["current_version"] != uint64(3) {
-		t.Fatalf("Bad response: %#v", resp)
+	tests := []testCase{
+		{
+			name:        "version 1",
+			data:        map[string]interface{}{"bar": "baz1"},
+			displayName: "Tester1",
+			entityID:    "11111111-1111-1111-1111-111111111111",
+			clientID:    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+			cas:         0,
+			expVersion:  1,
+		},
+		{
+			name:        "version 2",
+			data:        map[string]interface{}{"bar": "baz2"},
+			displayName: "Tester2",
+			entityID:    "22222222-2222-2222-2222-222222222222",
+			clientID:    "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+			cas:         1,
+			expVersion:  2,
+		},
+		{
+			name:        "version 3",
+			data:        map[string]interface{}{"bar": "baz3"},
+			displayName: "Tester3",
+			entityID:    "33333333-3333-3333-3333-333333333333",
+			clientID:    "cccccccc-cccc-cccc-cccc-cccccccccccc",
+			cas:         2,
+			expVersion:  3,
+		},
 	}
 
-	if resp.Data["oldest_version"] != uint64(2) {
-		t.Fatalf("Bad response: %#v", resp)
-	}
+	for _, tc := range tests {
+		data := map[string]interface{}{
+			"data":    tc.data,
+			"options": map[string]interface{}{"cas": tc.cas},
+		}
+		req := &logical.Request{
+			Operation:   logical.CreateOperation,
+			Path:        "data/foo",
+			Storage:     storage,
+			Data:        data,
+			DisplayName: tc.displayName,
+			EntityID:    tc.entityID,
+			ClientID:    tc.clientID,
+		}
+		resp, err = b.HandleRequest(context.Background(), req)
+		if err != nil || resp == nil || resp.IsError() {
+			t.Fatalf("[%s] err:%s resp:%#v\n", tc.name, err, resp)
+		}
 
-	if _, ok := resp.Data["versions"].(map[string]interface{})["2"]; !ok {
-		t.Fatalf("Bad response: %#v", resp)
-	}
+		if resp.Data["version"] != tc.expVersion {
+			t.Fatalf("[%s] Bad response: %#v", tc.name, resp)
+		}
 
-	if _, ok := resp.Data["versions"].(map[string]interface{})["3"]; !ok {
-		t.Fatalf("Bad response: %#v", resp)
+		// Metadata read test
+		req = &logical.Request{
+			Operation: logical.ReadOperation,
+			Path:      "metadata/foo",
+			Storage:   storage,
+		}
+		resp, err = b.HandleRequest(context.Background(), req)
+		if err != nil || resp == nil || resp.IsError() {
+			t.Fatalf("err:%s resp:%#v\n", err, resp)
+		}
+		schema.ValidateResponse(
+			t,
+			schema.GetResponseSchema(t, b.(*versionedKVBackend).Route(req.Path), req.Operation),
+			resp,
+			true,
+		)
+
+		versions := resp.Data["versions"].(map[string]interface{})
+		latestVersion := strconv.Itoa(len(versions))
+		latest := versions[latestVersion].(map[string]interface{})
+		actor := latest["created_by"].(*Attribution).Actor
+		entity := latest["created_by"].(*Attribution).EntityId
+		client := latest["created_by"].(*Attribution).ClientId
+
+		if actor != tc.displayName {
+			t.Fatalf("mistmatching attribution Actor for version %s: expected %s, got %s", latestVersion, tc.displayName, actor)
+		}
+		if entity != tc.entityID {
+			t.Fatalf("mistmatching attribution EntityID for version %s: expected %s, got %s", latestVersion, tc.entityID, entity)
+		}
+		if client != tc.clientID {
+			t.Fatalf("mistmatching attribution ClientID for version %s: expected %s, got %s", latestVersion, tc.clientID, client)
+		}
+
 	}
 
 	// Update the metadata settings, remove the cas requirement and lower the
@@ -483,7 +511,6 @@ func TestVersionedKV_Metadata_Put_Bad_CustomMetadata(t *testing.T) {
 	}
 
 	resp, err = b.HandleRequest(context.Background(), req)
-
 	if err != nil {
 		t.Fatalf("Read err: %#v, resp: %#v", err, resp)
 	}
@@ -523,7 +550,6 @@ func TestVersionedKV_Metadata_Put_Bad_CustomMetadata(t *testing.T) {
 	if !strings.Contains(respError, expectedError) {
 		t.Fatalf("expected response error %q to include %q validation errors", respError, expectedError)
 	}
-
 }
 
 func TestVersionedKv_Metadata_Put_Too_Many_CustomMetadata_Keys(t *testing.T) {
@@ -553,7 +579,6 @@ func TestVersionedKv_Metadata_Put_Too_Many_CustomMetadata_Keys(t *testing.T) {
 
 	if err != nil || resp == nil {
 		t.Fatalf("Write err: %s resp: %#v\n", err, resp)
-
 	}
 
 	if !resp.IsError() {
@@ -579,7 +604,6 @@ func TestVersionedKv_Metadata_Put_Too_Many_CustomMetadata_Keys(t *testing.T) {
 	}
 
 	resp, err = b.HandleRequest(context.Background(), req)
-
 	if err != nil {
 		t.Fatalf("Read err: %#v, resp :%#v", err, resp)
 	}
@@ -1024,7 +1048,6 @@ func TestVersionedKV_Metadata_Patch_Validation(t *testing.T) {
 			}
 
 			resp, err = b.HandleRequest(context.Background(), req)
-
 			if err != nil {
 				t.Fatalf("unexpected patch error, err: %#v", err)
 			}
@@ -1558,5 +1581,368 @@ func TestVersionedKV_Metadata_Patch_NilsUnset(t *testing.T) {
 
 	if maxVersions := resp.Data["max_versions"].(uint32); maxVersions != 0 {
 		t.Fatalf("expected max_versions to be unset to zero value")
+	}
+}
+
+func TestVersionedKV_Metadata_List_ExcludeDeleted(t *testing.T) {
+	b, storage := getBackend(t)
+
+	// Create first secret "foo"
+	data := map[string]interface{}{
+		"data": map[string]interface{}{
+			"bar": "baz",
+		},
+	}
+
+	req := &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "data/foo",
+		Storage:   storage,
+		Data:      data,
+	}
+
+	resp, err := b.HandleRequest(context.Background(), req)
+	if err != nil || (resp != nil && resp.IsError()) {
+		t.Fatalf("err:%s resp:%#v\n", err, resp)
+	}
+
+	// Create second secret "bar"
+	data = map[string]interface{}{
+		"data": map[string]interface{}{
+			"test": "value",
+		},
+	}
+
+	req = &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "data/bar",
+		Storage:   storage,
+		Data:      data,
+	}
+
+	resp, err = b.HandleRequest(context.Background(), req)
+	if err != nil || (resp != nil && resp.IsError()) {
+		t.Fatalf("err:%s resp:%#v\n", err, resp)
+	}
+
+	// Create third secret "baz" with multiple versions
+	data = map[string]interface{}{
+		"data": map[string]interface{}{
+			"version": "1",
+		},
+	}
+
+	req = &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "data/baz",
+		Storage:   storage,
+		Data:      data,
+	}
+
+	resp, err = b.HandleRequest(context.Background(), req)
+	if err != nil || (resp != nil && resp.IsError()) {
+		t.Fatalf("err:%s resp:%#v\n", err, resp)
+	}
+
+	// Create second version of "baz"
+	data = map[string]interface{}{
+		"data": map[string]interface{}{
+			"version": "2",
+		},
+		"options": map[string]interface{}{
+			"cas": float64(1),
+		},
+	}
+
+	req = &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "data/baz",
+		Storage:   storage,
+		Data:      data,
+	}
+
+	resp, err = b.HandleRequest(context.Background(), req)
+	if err != nil || (resp != nil && resp.IsError()) {
+		t.Fatalf("err:%s resp:%#v\n", err, resp)
+	}
+
+	// Test 1: List all secrets (default behavior - exclude_deleted=false)
+	req = &logical.Request{
+		Operation: logical.ListOperation,
+		Path:      "metadata/",
+		Storage:   storage,
+	}
+
+	resp, err = b.HandleRequest(context.Background(), req)
+	if err != nil || resp == nil || resp.IsError() {
+		t.Fatalf("err:%s resp:%#v\n", err, resp)
+	}
+
+	expected := []string{"bar", "baz", "foo"}
+	keys := resp.Data["keys"].([]string)
+	assertKeysMatch(t, keys, expected, "Test 1: List all secrets (default behavior)")
+
+	// Test 2: List with exclude_deleted=false explicitly
+	req = &logical.Request{
+		Operation: logical.ListOperation,
+		Path:      "metadata/",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"exclude_deleted": false,
+		},
+	}
+
+	resp, err = b.HandleRequest(context.Background(), req)
+	if err != nil || resp == nil || resp.IsError() {
+		t.Fatalf("err:%s resp:%#v\n", err, resp)
+	}
+
+	keys = resp.Data["keys"].([]string)
+	expected = []string{"bar", "baz", "foo"}
+	assertKeysMatch(t, keys, expected, "Test 2: List with exclude_deleted=false explicitly")
+
+	// Delete the current version of "foo"
+	deleteData := map[string]interface{}{
+		"versions": "1",
+	}
+
+	req = &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "delete/foo",
+		Storage:   storage,
+		Data:      deleteData,
+	}
+
+	resp, err = b.HandleRequest(context.Background(), req)
+	if err != nil || (resp != nil && resp.IsError()) {
+		t.Fatalf("err:%s resp:%#v\n", err, resp)
+	}
+
+	// Test 3: List all secrets after deletion (should still show "foo" by default)
+	req = &logical.Request{
+		Operation: logical.ListOperation,
+		Path:      "metadata/",
+		Storage:   storage,
+	}
+
+	resp, err = b.HandleRequest(context.Background(), req)
+	if err != nil || resp == nil || resp.IsError() {
+		t.Fatalf("err:%s resp:%#v\n", err, resp)
+	}
+
+	keys = resp.Data["keys"].([]string)
+	expected = []string{"bar", "baz", "foo"}
+	assertKeysMatch(t, keys, expected, "Test 3: List all secrets after deletion (should still show foo by default)")
+
+	// Test 4: List with exclude_deleted=true (should filter out "foo")
+	req = &logical.Request{
+		Operation: logical.ListOperation,
+		Path:      "metadata/",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"exclude_deleted": true,
+		},
+	}
+
+	resp, err = b.HandleRequest(context.Background(), req)
+	if err != nil || resp == nil || resp.IsError() {
+		t.Fatalf("err:%s resp:%#v\n", err, resp)
+	}
+
+	keys = resp.Data["keys"].([]string)
+	expected = []string{"bar", "baz"}
+	assertKeysMatch(t, keys, expected, "Test 4: List with exclude_deleted=true (should filter out foo)")
+
+	// Test 5: Delete version 1 of "baz"
+
+	deleteData = map[string]interface{}{
+		"versions": "1",
+	}
+
+	req = &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "delete/baz",
+		Storage:   storage,
+		Data:      deleteData,
+	}
+
+	resp, err = b.HandleRequest(context.Background(), req)
+	if err != nil || (resp != nil && resp.IsError()) {
+		t.Fatalf("err:%s resp:%#v\n", err, resp)
+	}
+
+	// Test 6: List with exclude_deleted=true after deleting old version (should still show "baz") as current version is not deleted
+	req = &logical.Request{
+		Operation: logical.ListOperation,
+		Path:      "metadata/",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"exclude_deleted": true,
+		},
+	}
+
+	resp, err = b.HandleRequest(context.Background(), req)
+	if err != nil || resp == nil || resp.IsError() {
+		t.Fatalf("err:%s resp:%#v\n", err, resp)
+	}
+
+	keys = resp.Data["keys"].([]string)
+	expected = []string{"bar", "baz"}
+	assertKeysMatch(t, keys, expected, "Test 6: List with exclude_deleted=true after deleting old version (should still show baz)")
+
+	// Test 7: Create a directory structure and test filtering with directories
+	data = map[string]interface{}{
+		"data": map[string]interface{}{
+			"nested": "value",
+		},
+	}
+
+	req = &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "data/dir/nested-secret",
+		Storage:   storage,
+		Data:      data,
+	}
+
+	resp, err = b.HandleRequest(context.Background(), req)
+	if err != nil || (resp != nil && resp.IsError()) {
+		t.Fatalf("err:%s resp:%#v\n", err, resp)
+	}
+
+	// Test 8: List root with directories and exclude_deleted=true. Directories should always be included.
+	req = &logical.Request{
+		Operation: logical.ListOperation,
+		Path:      "metadata/",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"exclude_deleted": true,
+		},
+	}
+
+	resp, err = b.HandleRequest(context.Background(), req)
+	if err != nil || resp == nil || resp.IsError() {
+		t.Fatalf("err:%s resp:%#v\n", err, resp)
+	}
+
+	keys = resp.Data["keys"].([]string)
+	// Should include: bar, baz, dir/ (directories are always included, deleted secrets excluded)
+	expected = []string{"bar", "baz", "dir/"}
+	assertKeysMatch(t, keys, expected, "Test 8: List root with directories and exclude_deleted=true")
+}
+
+func TestVersionedKV_Metadata_List_ExcludeDeleted_EdgeCases(t *testing.T) {
+	b, storage := getBackend(t)
+
+	// Test 1: Empty list with exclude_deleted=true
+	req := &logical.Request{
+		Operation: logical.ListOperation,
+		Path:      "metadata/",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"exclude_deleted": true,
+		},
+	}
+
+	resp, err := b.HandleRequest(context.Background(), req)
+	if err != nil || resp == nil || resp.IsError() {
+		t.Fatalf("err:%s resp:%#v\n", err, resp)
+	}
+
+	if resp.Data["keys"] != nil {
+		t.Fatalf("expected no keys for empty list, got %v", resp.Data["keys"])
+	}
+
+	// Test 2: Create a secret and immediately delete its only version
+	data := map[string]interface{}{
+		"data": map[string]interface{}{
+			"key": "value",
+		},
+	}
+
+	req = &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "data/single-version",
+		Storage:   storage,
+		Data:      data,
+	}
+
+	resp, err = b.HandleRequest(context.Background(), req)
+	if err != nil || (resp != nil && resp.IsError()) {
+		t.Fatalf("err:%s resp:%#v\n", err, resp)
+	}
+
+	// Delete the only version
+	deleteData := map[string]interface{}{
+		"versions": "1",
+	}
+
+	req = &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "delete/single-version",
+		Storage:   storage,
+		Data:      deleteData,
+	}
+
+	resp, err = b.HandleRequest(context.Background(), req)
+	if err != nil || (resp != nil && resp.IsError()) {
+		t.Fatalf("err:%s resp:%#v\n", err, resp)
+	}
+
+	// List with exclude_deleted=true should not show the secret
+	req = &logical.Request{
+		Operation: logical.ListOperation,
+		Path:      "metadata/",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"exclude_deleted": true,
+		},
+	}
+
+	resp, err = b.HandleRequest(context.Background(), req)
+	if err != nil || resp == nil || resp.IsError() {
+		t.Fatalf("err:%s resp:%#v\n", err, resp)
+	}
+
+	if resp.Data["keys"] != nil {
+		t.Fatalf("expected no keys when only secret is deleted, got %v", resp.Data["keys"])
+	}
+
+	// Test 4: List with exclude_deleted=false should still show the secret
+	req = &logical.Request{
+		Operation: logical.ListOperation,
+		Path:      "metadata/",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"exclude_deleted": false,
+		},
+	}
+
+	resp, err = b.HandleRequest(context.Background(), req)
+	if err != nil || resp == nil || resp.IsError() {
+		t.Fatalf("err:%s resp:%#v\n", err, resp)
+	}
+
+	keys := resp.Data["keys"].([]string)
+	expected := []string{"single-version"}
+	assertKeysMatch(t, keys, expected, "Edge case: Single entry list with exclude_deleted=true")
+
+	// Test 5: Test metadata read with exclude_deleted (should be ignored for read operations)
+	req = &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "metadata/single-version",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"exclude_deleted": true, // This should be ignored for read operations
+		},
+	}
+
+	resp, err = b.HandleRequest(context.Background(), req)
+	if err != nil || resp == nil || resp.IsError() {
+		t.Fatalf("err:%s resp:%#v\n", err, resp)
+	}
+
+	// Should still return metadata even though current version is deleted
+	if resp.Data["current_version"] != uint64(1) {
+		t.Fatalf("expected current_version 1, got %v", resp.Data["current_version"])
 	}
 }

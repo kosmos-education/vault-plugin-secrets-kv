@@ -1,4 +1,4 @@
-// Copyright (c) HashiCorp, Inc.
+// Copyright IBM Corp. 2018, 2025
 // SPDX-License-Identifier: MPL-2.0
 
 package kv
@@ -42,6 +42,7 @@ func pathsDelete(b *versionedKVBackend) []*framework.Path {
 			Operations: map[logical.Operation]framework.OperationHandler{
 				logical.UpdateOperation: &framework.PathOperation{
 					Callback: b.upgradeCheck(b.pathDeleteWrite()),
+					Summary: "Marks one or more versions as deleted in the KV store.",
 					Responses: map[int][]framework.Response{
 						http.StatusNoContent: {{
 							Description: http.StatusText(http.StatusNoContent),
@@ -76,6 +77,7 @@ func pathsDelete(b *versionedKVBackend) []*framework.Path {
 			Operations: map[logical.Operation]framework.OperationHandler{
 				logical.UpdateOperation: &framework.PathOperation{
 					Callback: b.upgradeCheck(b.pathUndeleteWrite()),
+					Summary: "Undeletes one or more versions from the KV store.",
 					Responses: map[int][]framework.Response{
 						http.StatusNoContent: {{
 							Description: http.StatusText(http.StatusNoContent),
@@ -117,6 +119,9 @@ func (b *versionedKVBackend) pathUndeleteWrite() framework.OperationFunc {
 			return nil, nil
 		}
 
+		//Get attribution info
+		attribution := getAttribution(req)
+
 		for _, verNum := range versions {
 			// If there is no version or the version is destroyed continue
 			lv := meta.Versions[uint64(verNum)]
@@ -124,6 +129,7 @@ func (b *versionedKVBackend) pathUndeleteWrite() framework.OperationFunc {
 				continue
 			}
 			lv.DeletionTime = nil
+			lv.DeletedBy = nil
 
 			if !config.IsDeleteVersionAfterDisabled() {
 				if dtime, ok := deletionTime(time.Now(), deleteVersionAfter(config), deleteVersionAfter(meta)); ok {
@@ -135,20 +141,28 @@ func (b *versionedKVBackend) pathUndeleteWrite() framework.OperationFunc {
 				}
 			}
 		}
+		attribution.Operation = "undelete"
+		meta.LastUpdatedBy = attribution
+
 		err = b.writeKeyMetadata(ctx, req.Storage, meta)
 		if err != nil {
 			return nil, err
 		}
+
 		marshaledVersions, err := json.Marshal(&versions)
 		if err != nil {
 			return nil, err
 		}
+
 		kvEvent(ctx, b.Backend, "undelete", "undelete/"+key, "data/"+key, true, 2,
 			"current_version", fmt.Sprintf("%d", meta.CurrentVersion),
 			"oldest_version", fmt.Sprintf("%d", meta.OldestVersion),
 			"undeleted_versions", string(marshaledVersions),
 		)
 		recordKvObservation(ctx, b.Backend, req, ObservationTypeKVv2SecretUndelete,
+			AdditionalKVMetadata{key: "oldest_version", value: meta.OldestVersion},
+			AdditionalKVMetadata{key: "current_version", value: meta.CurrentVersion},
+			AdditionalKVMetadata{key: "versions", value: kvVersionsMapToSlice(meta.Versions)},
 			AdditionalKVMetadata{key: "undeleted_versions", value: marshaledVersions})
 		return nil, nil
 	}
@@ -176,6 +190,9 @@ func (b *versionedKVBackend) pathDeleteWrite() framework.OperationFunc {
 			return nil, nil
 		}
 
+		// Get attribution info
+		attribution := getAttribution(req)
+
 		for _, verNum := range versions {
 			// If there is no latest version, or the latest version is already
 			// deleted or destroyed continue
@@ -196,7 +213,10 @@ func (b *versionedKVBackend) pathDeleteWrite() framework.OperationFunc {
 			}
 
 			lv.DeletionTime = ptypes.TimestampNow()
+			lv.DeletedBy = attribution
 		}
+
+		meta.LastUpdatedBy = attribution
 
 		err = b.writeKeyMetadata(ctx, req.Storage, meta)
 		if err != nil {
@@ -212,6 +232,8 @@ func (b *versionedKVBackend) pathDeleteWrite() framework.OperationFunc {
 			"deleted_versions", string(marshaledVersions),
 		)
 		recordKvObservation(ctx, b.Backend, req, ObservationTypeKVv2SecretDelete,
+			AdditionalKVMetadata{key: "current_version", value: meta.CurrentVersion},
+			AdditionalKVMetadata{key: "versions", value: kvVersionsMapToSlice(meta.Versions)},
 			AdditionalKVMetadata{key: "deleted_versions", value: marshaledVersions})
 		return nil, nil
 	}

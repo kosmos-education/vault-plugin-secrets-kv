@@ -1,4 +1,58 @@
-## Unreleased
+## v0.26.2
+### March 20, 2026
+
+* Revert changes to initialization (#234)
+* Update dependecies (#232)
+* prepare v0.26.0 release (#229)
+* Bump actions/setup-go from 6.0.0 to 6.3.0 (#227)
+* Automated dependency upgrades (#228)
+* [COMPLIANCE] Update Copyright and License Headers (#224)
+* chore: remove changie (#216)
+* Initialize context can't be used for a goroutine. (#214)
+* Check for already upgraded mount on downstream nodes (#213)
+* Use Initialize to do the trivial upgrade fully synchronously. (#212)
+* Update changelog for v0.25.0 release (#211)
+
+## v0.25.0
+### October 2, 2025
+
+* VAULT-39895: add attribution data for undelete and group version operations (#210)
+* Bump actions/setup-go from 5.5.0 to 6.0.0 (#205)
+* Bump go version to 1.25.1 (#209)
+* Bump actions/checkout from 4.2.2 to 5.0.0 (#200)
+* Automated dependency upgrades (#195)
+* Add changelog for KV version attribution (#208)
+* Always populate ClientID (#207)
+* Add attribution data to secret version metadata (#206)
+* [COMPLIANCE] Add Copyright and License Headers (#204)
+* init changie (#203)
+
+## v0.24.0
+
+CHANGES:
+
+* Bump Go version to 1.24.3
+
+## v0.23.0
+
+CHANGES:
+
+* Support read/list of loaded snapshots [GH-188](https://github.com/hashicorp/vault-plugin-secrets-kv/pull/188)
+* Updated dependencies:
+  * `github.com/hashicorp/vault/sdk` v0.16.0 -> v0.17.0
+
+## v0.22.2
+
+CHANGES:
+
+* Fix casing of observation JSON [GH-189](https://github.com/hashicorp/vault-plugin-secrets-kv/pull/189)
+
+## v0.22.1
+
+CHANGES:
+
+* Downgraded dependency:
+  * `github.com/hashicorp/hcl` v1.0.1-vault-7 -> v1.0.1-vault-5
 
 ## v0.24.0
 

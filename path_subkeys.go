@@ -1,4 +1,4 @@
-// Copyright (c) HashiCorp, Inc.
+// Copyright IBM Corp. 2018, 2025
 // SPDX-License-Identifier: MPL-2.0
 
 package kv
@@ -45,6 +45,7 @@ func pathSubkeys(b *versionedKVBackend) *framework.Path {
 		Operations: map[logical.Operation]framework.OperationHandler{
 			logical.ReadOperation: &framework.PathOperation{
 				Callback: b.upgradeCheck(b.pathSubkeysRead()),
+				Summary:  "Read the structure of a secret entry from the KV store with the values removed.",
 				Responses: map[int][]framework.Response{
 					http.StatusOK: {{
 						Description: http.StatusText(http.StatusOK),

@@ -1,4 +1,4 @@
-// Copyright (c) HashiCorp, Inc.
+// Copyright IBM Corp. 2018, 2025
 // SPDX-License-Identifier: MPL-2.0
 
 package kv
@@ -92,6 +92,7 @@ version matches the version specified in the cas parameter.`,
 				DisplayAttrs: &framework.DisplayAttributes{
 					OperationVerb: "write",
 				},
+				Summary:   "Write a secret at the specified location.",
 				Responses: updateCreatePatchResponseSchema,
 			},
 			logical.CreateOperation: &framework.PathOperation{
@@ -99,6 +100,7 @@ version matches the version specified in the cas parameter.`,
 				DisplayAttrs: &framework.DisplayAttributes{
 					OperationVerb: "write",
 				},
+				Summary:   "Write a secret at the specified location.",
 				Responses: updateCreatePatchResponseSchema,
 			},
 			logical.ReadOperation: &framework.PathOperation{
@@ -106,6 +108,7 @@ version matches the version specified in the cas parameter.`,
 				DisplayAttrs: &framework.DisplayAttributes{
 					OperationVerb: "read",
 				},
+				Summary: "Read the secret at the specified location.",
 				Responses: map[int][]framework.Response{
 					http.StatusOK: {{
 						Description: http.StatusText(http.StatusOK),
@@ -127,6 +130,7 @@ version matches the version specified in the cas parameter.`,
 				DisplayAttrs: &framework.DisplayAttributes{
 					OperationVerb: "delete",
 				},
+				Summary: "Delete the latest version of the secret at the specified location.",
 				Responses: map[int][]framework.Response{
 					http.StatusNoContent: {{
 						Description: http.StatusText(http.StatusNoContent),
@@ -138,6 +142,15 @@ version matches the version specified in the cas parameter.`,
 				DisplayAttrs: &framework.DisplayAttributes{
 					OperationVerb: "patch",
 				},
+				Summary:   "Patch an existing secret at the specified location.",
+				Responses: updateCreatePatchResponseSchema,
+			},
+			logical.RecoverOperation: &framework.PathOperation{
+				Callback: b.upgradeCheck(b.pathDataRecover()),
+				DisplayAttrs: &framework.DisplayAttributes{
+					OperationVerb: "recover",
+				},
+				Summary:   "Recover the secret at the specified location from a snapshot.",
 				Responses: updateCreatePatchResponseSchema,
 			},
 		},
@@ -418,6 +431,9 @@ func (b *versionedKVBackend) pathDataWrite() framework.OperationFunc {
 			return nil, err
 		}
 
+		// Extract Attribution data from request and add to metadata
+		meta.LastUpdatedBy = getAttribution(req)
+
 		// Add version to the key metadata and calculate version to delete
 		// based on the max_versions specified by either the secret's key
 		// metadata or the engine's config
@@ -449,9 +465,87 @@ func (b *versionedKVBackend) pathDataWrite() framework.OperationFunc {
 			"current_version", fmt.Sprintf("%d", meta.CurrentVersion),
 			"oldest_version", fmt.Sprintf("%d", meta.OldestVersion),
 		)
-		recordKvObservation(ctx, b.Backend, req, ObservationTypeKVv2SecretWrite)
+		recordKvObservation(ctx, b.Backend, req, ObservationTypeKVv2SecretWrite,
+			AdditionalKVMetadata{key: "is_new_secret", value: meta.CurrentVersion == 1 && meta.OldestVersion == 1},
+			AdditionalKVMetadata{key: "oldest_version", value: meta.OldestVersion},
+			AdditionalKVMetadata{key: "versions", value: kvVersionsMapToSlice(meta.Versions)},
+			AdditionalKVMetadata{key: "current_version", value: meta.CurrentVersion})
 
 		return resp, nil
+	}
+}
+
+// pathDataRecover restores the latest readable version of a KVv2 secret
+// from a snapshot. It reads the secret directly from snapshot storage (using
+// RecoverSourcePath when recovering into a different path) and writes it back
+// through the normal write path as a new version.
+func (b *versionedKVBackend) pathDataRecover() framework.OperationFunc {
+	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+		snapshotStorage, err := logical.NewSnapshotStorageView(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create snapshot storage: %w", err)
+		}
+
+		// default: in-place recover (read from same path we write to)
+		sourcePath := req.Path
+		// copy recover: a different source was specified
+		if req.RecoverSourcePath != "" {
+			fd, err := b.RecoverSourcePathFieldData(req)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse recover source path: %w", err)
+			}
+
+			sourceKey, ok := fd.Get("path").(string)
+			if !ok {
+				return logical.ErrorResponse("invalid recover source path"), logical.ErrInvalidRequest
+			}
+			// override source to the other path
+			sourcePath = "data/" + sourceKey
+		}
+
+		readReq := &logical.Request{
+			Operation: logical.ReadOperation,
+			Path:      sourcePath,
+			Storage:   snapshotStorage,
+		}
+
+		// Read via the normal data path so deleted/destroyed versions are
+		// surfaced (and rejected) rather than recovered as empty data.
+		readResp, err := b.HandleRequest(ctx, readReq)
+		if err != nil {
+			return nil, err
+		}
+		if readResp == nil {
+			return logical.ErrorResponse("no data provided"), logical.ErrInvalidRequest
+		}
+
+		rawData, ok := readResp.Data["data"]
+		if !ok {
+			return logical.ErrorResponse("no data provided"), logical.ErrInvalidRequest
+		}
+
+		vData, ok := rawData.(map[string]interface{})
+		if !ok {
+			return logical.ErrorResponse("invalid data provided"), logical.ErrInvalidRequest
+		}
+
+		recoverPath, ok := data.Get("path").(string)
+		if !ok {
+			return logical.ErrorResponse("invalid recover destination path"), logical.ErrInvalidRequest
+		}
+
+		// writeData carries the two fields pathDataWrite reads: "data" is the snapshot
+		// secret, "path" is the recover destination. Version metadata is not preserved
+		// across recoveries; instead the write creates a new version with fresh metadata.
+		writeData := &framework.FieldData{
+			Raw: map[string]interface{}{
+				"path": recoverPath,
+				"data": vData,
+			},
+			Schema: data.Schema,
+		}
+
+		return b.pathDataWrite()(ctx, req, writeData)
 	}
 }
 
@@ -619,6 +713,9 @@ func (b *versionedKVBackend) pathDataPatch() framework.OperationFunc {
 			return nil, err
 		}
 
+		// Extract Attribution data from request and add to metadata
+		meta.LastUpdatedBy = getAttribution(req)
+
 		// Add version to the key metadata and calculate version to delete
 		// based on the max_versions specified by either the secret's key
 		// metadata or the engine's config
@@ -650,7 +747,10 @@ func (b *versionedKVBackend) pathDataPatch() framework.OperationFunc {
 			"current_version", fmt.Sprintf("%d", meta.CurrentVersion),
 			"oldest_version", fmt.Sprintf("%d", meta.OldestVersion),
 		)
-		recordKvObservation(ctx, b.Backend, req, ObservationTypeKVv2SecretPatch)
+		recordKvObservation(ctx, b.Backend, req, ObservationTypeKVv2SecretPatch,
+			AdditionalKVMetadata{key: "oldest_version", value: meta.OldestVersion},
+			AdditionalKVMetadata{key: "versions", value: kvVersionsMapToSlice(meta.Versions)},
+			AdditionalKVMetadata{key: "current_version", value: meta.CurrentVersion})
 		return resp, nil
 	}
 }
@@ -691,6 +791,11 @@ func (b *versionedKVBackend) pathDataDelete() framework.OperationFunc {
 
 		lv.DeletionTime = ptypes.TimestampNow()
 
+		// Extract Attribution data from request
+		attribution := getAttribution(req)
+		lv.DeletedBy = attribution
+		meta.LastUpdatedBy = attribution
+
 		err = b.writeKeyMetadata(ctx, req.Storage, meta)
 		if err != nil {
 			return nil, err
@@ -700,7 +805,10 @@ func (b *versionedKVBackend) pathDataDelete() framework.OperationFunc {
 			"current_version", fmt.Sprintf("%d", meta.CurrentVersion),
 			"oldest_version", fmt.Sprintf("%d", meta.OldestVersion),
 		)
-		recordKvObservation(ctx, b.Backend, req, ObservationTypeKVv2SecretDelete)
+		recordKvObservation(ctx, b.Backend, req, ObservationTypeKVv2SecretDelete,
+			AdditionalKVMetadata{key: "oldest_version", value: meta.OldestVersion},
+			AdditionalKVMetadata{key: "current_version", value: meta.CurrentVersion},
+			AdditionalKVMetadata{key: "versions", value: kvVersionsMapToSlice(meta.Versions)})
 		return nil, nil
 	}
 }
@@ -716,6 +824,7 @@ func (k *KeyMetadata) AddVersion(createdTime, deletionTime *timestamp.Timestamp,
 	vm := &VersionMetadata{
 		CreatedTime:  createdTime,
 		DeletionTime: deletionTime,
+		CreatedBy:    k.LastUpdatedBy,
 	}
 
 	k.CurrentVersion++
@@ -757,8 +866,9 @@ func max(a, b uint32) uint32 {
 	return a
 }
 
-const dataHelpSyn = `Write, Patch, Read, and Delete data in the Key-Value Store.`
-const dataHelpDesc = `
+const (
+	dataHelpSyn  = `Write, Patch, Read, and Delete data in the Key-Value Store.`
+	dataHelpDesc = `
 This path takes a key name and based on the operation stores, retrieves or
 deletes versions of data.
 
@@ -781,3 +891,4 @@ Delete operations are a soft delete. They will mark the latest version as
 deleted, but the underlying data will not be fully removed. Delete operations
 can be undone.
 `
+)
